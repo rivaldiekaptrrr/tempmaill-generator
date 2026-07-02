@@ -37,7 +37,7 @@ TELEGRAM_BOT_TOKEN: str = os.environ.get(
     "TELEGRAM_BOT_TOKEN", "8769394239:AAE5_wd77Rn6hOYiLKsOPZ2RjtIwvSsvOps"
 )
 
-# Global State
+# Global States
 user_emails: dict[int, list[str]] = defaultdict(list)
 monitoring_tasks: dict[str, asyncio.Task[Any]] = {}
 seen_messages: set[str] = set()
