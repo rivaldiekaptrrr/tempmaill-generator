@@ -342,13 +342,33 @@ pytest tests/ -v
 
 The project includes a fully interactive Telegram bot that allows you to manage multiple temporary emails directly from your chat.
 
-### Features
-- `/generate` - Create a new email address and automatically monitor it in the background via Server-Sent Events (SSE).
-- `/check` - Manually force a check for new emails on all active addresses (Fallback).
-- `/list` - View all active emails currently being monitored.
-- `/stop` - Stop monitoring an email via an interactive inline keyboard.
-- `/autocheck` - Toggle automatic background monitoring via inline buttons.
-- Automatically extracts OTP codes and verification links from incoming emails.
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/generate` | Create a new email address with a **random domain** and automatically monitor it via SSE. |
+| `/choose` | 🆕 **Pick your own domain** from a paginated list of 950+ available domains, then generate an email with the chosen domain. |
+| `/check` | Manually force a check for new emails on all active addresses (fallback polling). |
+| `/list` | View all active emails currently being monitored with their status. |
+| `/stop` | Stop monitoring an email via an interactive inline keyboard. |
+| `/autocheck` | Toggle automatic background monitoring on/off via inline buttons. |
+| `/help` | Show the help message. |
+
+Automatically extracts **OTP codes** and **verification links** from incoming emails.
+
+### `/choose` — Domain Selection with Pagination
+
+The `/choose` command lets you pick a domain from the full list of **958 available domains**, presented 8 at a time with navigation buttons.
+
+**Flow:**
+1. Type `/choose` → bot fetches domain list (cached after first call)
+2. An inline keyboard appears showing **8 domains per page**
+3. Navigate with **⬅️ Prev** / **Next ➡️** buttons; current page indicator (e.g. `📄 1/120`) is shown in the center
+4. Tap any domain → bot generates an email with that domain and starts monitoring automatically
+
+> **Note:** The domain list is cached in memory after the first `/choose` call. To force a refresh, restart the bot.
+
+You can change the number of domains shown per page by editing `DOMAINS_PER_PAGE` in the bot script (default: `8`).
 
 ### Running Locally
 ```bash

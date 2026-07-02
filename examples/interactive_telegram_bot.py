@@ -4,7 +4,8 @@ Example: Interactive Telegram Bot for CleanTempMail.
 This script uses `python-telegram-bot` to create a fully interactive bot.
 Features:
 - /start: Tampilkan menu bantuan
-- /generate: Buat email baru dan pantau secara otomatis
+- /generate: Buat email baru dan pantau secara otomatis (domain acak)
+- /choose: Buat email dengan memilih domain sendiri (dengan paginasi)
 - /list: Tampilkan daftar email Anda
 - /stop: Hentikan monitoring dan hapus email dari daftar
 - /autocheck: Kelola pengaturan auto-monitoring
@@ -40,6 +41,9 @@ TELEGRAM_BOT_TOKEN: str = os.environ.get(
     "TELEGRAM_BOT_TOKEN", "8769394239:AAE5_wd77Rn6hOYiLKsOPZ2RjtIwvSsvOps"
 )
 
+# Configuration
+DOMAINS_PER_PAGE: int = 8  # Jumlah domain yang ditampilkan per halaman
+
 # Global States
 user_emails: dict[int, list[str]] = defaultdict(list)
 monitoring_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -47,6 +51,9 @@ monitoring_tasks: dict[str, asyncio.Task[Any]] = {}
 # Fix Kelemahan #2: seen_messages diisolasi per-user (chat_id) agar tidak bocor antar pengguna
 seen_messages: dict[int, set[str]] = defaultdict(set)
 auto_monitor_state: dict[int, bool] = defaultdict(lambda: True)
+
+# Cache domain list agar tidak perlu memanggil API berulang kali
+_domain_cache: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +144,66 @@ def _start_monitoring(
     return task
 
 
+async def _get_domains(loop: asyncio.AbstractEventLoop) -> list[str]:
+    """Ambil daftar domain dari API, gunakan cache jika sudah tersedia."""
+    global _domain_cache
+    if _domain_cache:
+        return _domain_cache
+
+    def fetch() -> list[str]:
+        with TempMailClient() as client:
+            # Ambil semua domain sekaligus (total ~958)
+            return client.get_domains(limit=1000)
+
+    try:
+        _domain_cache = await loop.run_in_executor(None, fetch)
+        logger.info("Domain cache diperbarui: %d domain tersedia.", len(_domain_cache))
+    except Exception as e:
+        logger.error("Gagal mengambil daftar domain: %s", e)
+        _domain_cache = []
+    return _domain_cache
+
+
+def _build_domain_keyboard(domains: list[str], page: int) -> InlineKeyboardMarkup:
+    """
+    Buat inline keyboard berisi daftar domain untuk halaman tertentu,
+    lengkap dengan tombol navigasi paginasi di bagian bawah.
+    """
+    total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))  # clamp ke range yang valid
+
+    start = page * DOMAINS_PER_PAGE
+    end = start + DOMAINS_PER_PAGE
+    page_domains = domains[start:end]
+
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    # Tombol domain (2 kolom agar lebih ringkas)
+    for i in range(0, len(page_domains), 2):
+        row = [InlineKeyboardButton(
+            f"📧 {page_domains[i]}", callback_data=f"choose_domain:{page_domains[i]}"
+        )]
+        if i + 1 < len(page_domains):
+            row.append(InlineKeyboardButton(
+                f"📧 {page_domains[i + 1]}", callback_data=f"choose_domain:{page_domains[i + 1]}"
+            ))
+        keyboard.append(row)
+
+    # Baris navigasi paginasi
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"choose_page:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(
+        f"📄 {page + 1}/{total_pages}", callback_data="choose_noop"
+    ))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"choose_page:{page + 1}"))
+
+    keyboard.append(nav_row)
+    return InlineKeyboardMarkup(keyboard)
+
+
+
 # ---------------------------------------------------------------------------
 # Command Handlers
 # ---------------------------------------------------------------------------
@@ -151,7 +218,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🤖 *Selamat datang di TempMail Bot!*\n\n"
         "Saya bisa membuat dan memantau email sementara untuk Anda.\n\n"
         "*Perintah:*\n"
-        "`/generate` - Buat email baru dan mulai monitoring\n"
+        "`/generate` - Buat email baru (domain acak)\n"
+        "`/choose` - Pilih domain sendiri dari daftar\n"
         "`/check` - Cek inbox semua email secara manual\n"
         "`/list` - Tampilkan daftar email Anda\n"
         "`/stop` - Hentikan monitoring dan hapus email dari daftar\n"
@@ -159,6 +227,33 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "`/help` - Tampilkan pesan ini"
     )
     await update.effective_chat.send_message(text, parse_mode="Markdown")
+
+
+async def choose_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler untuk command /choose — pilih domain lalu generate email."""
+    if not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+
+    msg = await update.effective_chat.send_message("⏳ Memuat daftar domain...")
+
+    loop = asyncio.get_running_loop()
+    domains = await _get_domains(loop)
+
+    if not domains:
+        await msg.edit_text("❌ Gagal memuat daftar domain. Silakan coba lagi nanti.")
+        return
+
+    total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
+    reply_markup = _build_domain_keyboard(domains, page=0)
+
+    await msg.edit_text(
+        f"🌐 *Pilih Domain Email Anda*\n\n"
+        f"Tersedia *{len(domains)} domain* di *{total_pages} halaman*.\n"
+        f"Ketuk salah satu domain di bawah untuk membuat email dengan domain tersebut:",
+        parse_mode="Markdown",
+        reply_markup=reply_markup,
+    )
 
 
 async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -337,10 +432,93 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     data = query.data
+    chat_id = update.effective_chat.id if update.effective_chat else 0
 
+    # --- Tombol no-op (indikator halaman, tidak melakukan apa-apa) ---
+    if data == "choose_noop":
+        return
+
+    # --- Navigasi halaman pada /choose ---
+    if data and data.startswith("choose_page:"):
+        try:
+            page = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+
+        loop = asyncio.get_running_loop()
+        domains = await _get_domains(loop)
+        if not domains:
+            await query.edit_message_text("❌ Gagal memuat daftar domain.")
+            return
+
+        total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
+        reply_markup = _build_domain_keyboard(domains, page)
+        await query.edit_message_text(
+            f"🌐 *Pilih Domain Email Anda*\n\n"
+            f"Tersedia *{len(domains)} domain* di *{total_pages} halaman*.\n"
+            f"Ketuk salah satu domain di bawah untuk membuat email dengan domain tersebut:",
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+        return
+
+    # --- User memilih domain tertentu ---
+    if data and data.startswith("choose_domain:"):
+        chosen_domain = data.split(":", 1)[1]
+
+        await query.edit_message_text(
+            f"⏳ Membuat email baru dengan domain `{chosen_domain}`...",
+            parse_mode="Markdown",
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def generate_with_domain() -> str:
+            with TempMailClient() as client:
+                # Gunakan internal _post dari library untuk generate email dengan domain tertentu
+                from tempmail.constants import ENDPOINT_GENERATE_EMAIL
+                body = client._post(ENDPOINT_GENERATE_EMAIL, json={"domain": chosen_domain})
+                return body.get("data", {}).get("email", "")
+
+        try:
+            email_address = await loop.run_in_executor(None, generate_with_domain)
+        except Exception as e:
+            logger.error("Gagal generate email dengan domain %s: %s", chosen_domain, e)
+            await query.edit_message_text(
+                f"❌ Gagal membuat email dengan domain `{chosen_domain}`.\n"
+                f"Error: `{e}`",
+                parse_mode="Markdown",
+            )
+            return
+
+        if not email_address:
+            await query.edit_message_text("❌ Respons API tidak valid.")
+            return
+
+        user_emails[chat_id].append(email_address)
+
+        if auto_monitor_state[chat_id]:
+            _start_monitoring(email_address, chat_id, context)
+            await query.edit_message_text(
+                f"✅ *Email Baru Berhasil Dibuat!*\n\n"
+                f"📧 Alamat: `{email_address}`\n"
+                f"🌐 Domain: `{chosen_domain}`\n\n"
+                f"_Monitoring dimulai secara otomatis. Anda akan diberi tahu saat ada email masuk._",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text(
+                f"✅ *Email Baru Berhasil Dibuat!*\n\n"
+                f"📧 Alamat: `{email_address}`\n"
+                f"🌐 Domain: `{chosen_domain}`\n\n"
+                f"_Auto-check sedang MATI. Gunakan /check untuk mengecek inbox secara manual._",
+                parse_mode="Markdown",
+            )
+        return
+
+    # --- Handler autocheck ---
     if data and data.startswith("autocheck:"):
         mode = data.split(":", 1)[1]
-        chat_id = update.effective_chat.id if update.effective_chat else 0
 
         if mode == "off":
             auto_monitor_state[chat_id] = False
@@ -377,9 +555,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         return
 
+    # --- Handler stop ---
     if data and data.startswith("stop:"):
         email_to_stop = data.split(":", 1)[1]
-        chat_id = update.effective_chat.id if update.effective_chat else 0
 
         # Batalkan task jika masih aktif
         task = monitoring_tasks.pop(email_to_stop, None)
@@ -416,6 +594,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", start_command))
     app.add_handler(CommandHandler("generate", generate_command))
+    app.add_handler(CommandHandler("choose", choose_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("autocheck", autocheck_command))
     app.add_handler(CommandHandler("list", list_command))
