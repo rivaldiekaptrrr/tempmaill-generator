@@ -305,7 +305,7 @@ async def monitor_async(
     from tempmail.config import default_config
 
     effective_config = config or default_config
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Optional[EmailMessage]] = asyncio.Queue()
 
     def _producer() -> None:
