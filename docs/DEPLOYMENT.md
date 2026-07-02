@@ -27,9 +27,9 @@ By default, GitHub makes the uploaded package (Docker Image) private.
 
 ### Step 3 — Deploy on Coolify
 1. In your Coolify dashboard, click **New Resource → Docker Image**.
-2. In the **Image Name** field, enter the GHCR link. It looks like this:
+2. In the **Image Name** field, enter the GHCR link. For this repository, it is:
    ```
-   ghcr.io/your_github_username/your_repo_name:latest
+   ghcr.io/rivaldiekaptrrr/tempmaill-generator:latest
    ```
 3. Go to the **Environment Variables** tab and add:
    - Key: `TELEGRAM_BOT_TOKEN`
