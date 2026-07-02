@@ -5,7 +5,7 @@
 
 A clean, modular Python library for interacting with the **CleanTempMail** API.  
 Generate disposable email addresses, monitor inboxes in real-time, extract OTPs, and more — without any web scraping.
-fix webhooks
+
 ---
 
 ## ✨ Features
@@ -363,6 +363,19 @@ python examples/interactive_telegram_bot.py
 
 Looking to deploy this bot to production (e.g. on Coolify, VPS, or Docker)?  
 Read our detailed **[Deployment Guide](docs/DEPLOYMENT.md)**.
+
+### Troubleshooting Coolify Auto-Deploy (Manual Webhook)
+Jika Anda menggunakan Coolify dan *auto-deploy* tidak berjalan saat Anda melakukan `git push`, Anda mungkin perlu menyetel webhook secara manual:
+
+1. Di dashboard Coolify Anda, buka menu **Webhooks** pada pengaturan resource aplikasi Anda.
+2. Salin URL dari **Manual Git Webhooks (GitHub)** dan **GitHub Webhook Secret**.
+3. Buka repositori GitHub Anda -> **Settings** -> **Webhooks** -> klik **Add webhook**.
+4. Isi **Payload URL** dengan URL dari Coolify.
+5. Ubah **Content type** menjadi `application/json` *(Sangat Penting!)*.
+6. Masukkan **Secret** dari Coolify ke kolom Secret di GitHub.
+7. Pilih **Just the push event**, pastikan **Active** tercentang, lalu klik **Add webhook**.
+
+Sekarang, setiap kali Anda menjalankan `git push`, GitHub akan mengirimkan *ping* ke Coolify dan memicu proses *auto-deploy*!
 
 ---
 
