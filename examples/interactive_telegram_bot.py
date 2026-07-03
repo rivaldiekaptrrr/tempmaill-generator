@@ -62,6 +62,9 @@ monitoring_tasks: dict[str, asyncio.Task[Any]] = {}
 seen_messages: dict[int, set[str]] = defaultdict(set)
 auto_monitor_state: dict[int, bool] = defaultdict(lambda: True)
 
+# Default domain per-user: jika diset, /generate akan selalu menggunakan domain ini
+user_default_domain: dict[int, str] = {}
+
 # Cache domain list agar tidak perlu memanggil API berulang kali
 _domain_cache: list[str] = []
 
@@ -174,10 +177,17 @@ async def _get_domains(loop: asyncio.AbstractEventLoop) -> list[str]:
     return _domain_cache
 
 
-def _build_domain_keyboard(domains: list[str], page: int) -> InlineKeyboardMarkup:
+def _build_domain_keyboard(
+    domains: list[str], page: int, mode: str = "choose"
+) -> InlineKeyboardMarkup:
     """
-    Buat inline keyboard berisi daftar domain untuk halaman tertentu,
-    lengkap dengan tombol navigasi paginasi di bagian bawah.
+    Buat inline keyboard berisi daftar domain untuk halaman tertentu.
+
+    Args:
+        domains: Daftar semua domain yang tersedia.
+        page: Nomor halaman saat ini (0-indexed).
+        mode: "choose" untuk /choose (langsung generate email),
+              "setdomain" untuk /setdomain (simpan sebagai default).
     """
     total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))  # clamp ke range yang valid
@@ -186,30 +196,41 @@ def _build_domain_keyboard(domains: list[str], page: int) -> InlineKeyboardMarku
     end = start + DOMAINS_PER_PAGE
     page_domains = domains[start:end]
 
+    # Prefix callback_data berbeda tergantung mode
+    domain_cb = "choose_domain" if mode == "choose" else "setdomain_domain"
+    page_cb   = "choose_page"   if mode == "choose" else "setdomain_page"
+    noop_cb   = "choose_noop"   if mode == "choose" else "setdomain_noop"
+
     keyboard: list[list[InlineKeyboardButton]] = []
 
     # Tombol domain (2 kolom agar lebih ringkas)
     for i in range(0, len(page_domains), 2):
         row = [InlineKeyboardButton(
-            f"📧 {page_domains[i]}", callback_data=f"choose_domain:{page_domains[i]}"
+            f"📧 {page_domains[i]}", callback_data=f"{domain_cb}:{page_domains[i]}"
         )]
         if i + 1 < len(page_domains):
             row.append(InlineKeyboardButton(
-                f"📧 {page_domains[i + 1]}", callback_data=f"choose_domain:{page_domains[i + 1]}"
+                f"📧 {page_domains[i + 1]}", callback_data=f"{domain_cb}:{page_domains[i + 1]}"
             ))
         keyboard.append(row)
 
     # Baris navigasi paginasi
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"choose_page:{page - 1}"))
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"{page_cb}:{page - 1}"))
     nav_row.append(InlineKeyboardButton(
-        f"📄 {page + 1}/{total_pages}", callback_data="choose_noop"
+        f"📄 {page + 1}/{total_pages}", callback_data=noop_cb
     ))
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"choose_page:{page + 1}"))
-
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"{page_cb}:{page + 1}"))
     keyboard.append(nav_row)
+
+    # Tombol reset khusus untuk mode setdomain
+    if mode == "setdomain":
+        keyboard.append([
+            InlineKeyboardButton("🎲 Reset ke Domain Acak", callback_data="setdomain_reset")
+        ])
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -228,8 +249,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "🤖 *Selamat datang di TempMail Bot!*\n\n"
         "Saya bisa membuat dan memantau email sementara untuk Anda.\n\n"
         "*Perintah:*\n"
-        "`/generate` - Buat email baru (domain acak)\n"
-        "`/choose` - Pilih domain sendiri dari daftar\n"
+        "`/generate` - Buat email baru (gunakan domain default jika sudah diatur)\n"
+        "`/choose` - Pilih domain sendiri sekali pakai dari daftar\n"
+        "`/setdomain` - Atur domain default untuk /generate\n"
         "`/check` - Cek inbox semua email secara manual\n"
         "`/list` - Tampilkan daftar email Anda\n"
         "`/stop` - Hentikan monitoring dan hapus email dari daftar\n"
@@ -240,10 +262,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def choose_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler untuk command /choose — pilih domain lalu generate email."""
+    """Handler untuk command /choose — pilih domain lalu generate email (sekali pakai)."""
     if not update.effective_chat:
         return
-    chat_id = update.effective_chat.id
 
     msg = await update.effective_chat.send_message("⏳ Memuat daftar domain...")
 
@@ -255,12 +276,48 @@ async def choose_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
-    reply_markup = _build_domain_keyboard(domains, page=0)
+    reply_markup = _build_domain_keyboard(domains, page=0, mode="choose")
 
     await msg.edit_text(
-        f"🌐 *Pilih Domain Email Anda*\n\n"
+        f"🌐 *Pilih Domain Email (Sekali Pakai)*\n\n"
         f"Tersedia *{len(domains)} domain* di *{total_pages} halaman*.\n"
-        f"Ketuk salah satu domain di bawah untuk membuat email dengan domain tersebut:",
+        f"Ketuk salah satu domain untuk langsung membuat email:\n"
+        f"_Gunakan /setdomain jika ingin menyimpan domain sebagai default._",
+        parse_mode="Markdown",
+        reply_markup=reply_markup,
+    )
+
+
+async def setdomain_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler untuk command /setdomain — simpan domain default untuk /generate."""
+    if not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+
+    current = user_default_domain.get(chat_id)
+    current_info = (
+        f"Domain default saat ini: `{current}`\n"
+        if current
+        else "Saat ini belum ada domain default (email dibuat secara acak).\n"
+    )
+
+    msg = await update.effective_chat.send_message("⏳ Memuat daftar domain...")
+
+    loop = asyncio.get_running_loop()
+    domains = await _get_domains(loop)
+
+    if not domains:
+        await msg.edit_text("❌ Gagal memuat daftar domain. Silakan coba lagi nanti.")
+        return
+
+    total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
+    reply_markup = _build_domain_keyboard(domains, page=0, mode="setdomain")
+
+    await msg.edit_text(
+        f"⚙️ *Atur Domain Default untuk /generate*\n\n"
+        f"{current_info}"
+        f"Tersedia *{len(domains)} domain* di *{total_pages} halaman*.\n"
+        f"Pilih domain yang ingin dijadikan default:",
         parse_mode="Markdown",
         reply_markup=reply_markup,
     )
@@ -272,31 +329,41 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not chat_id:
         return
 
-    msg = await update.effective_chat.send_message("⏳ Membuat email baru...")
+    # Ambil domain default user jika sudah diatur
+    default_domain = user_default_domain.get(chat_id)
+    if default_domain:
+        loading_text = f"⏳ Membuat email baru dengan domain `{default_domain}`..."
+    else:
+        loading_text = "⏳ Membuat email baru..."
+
+    msg = await update.effective_chat.send_message(loading_text, parse_mode="Markdown")
 
     loop = asyncio.get_running_loop()
     with TempMailClient() as client:
         try:
-            email = await loop.run_in_executor(None, client.generate_email)
+            email = await loop.run_in_executor(
+                None, lambda: client.generate_email(domain=default_domain)
+            )
         except Exception as e:
             await msg.edit_text(f"❌ Gagal membuat email: {e}")
             return
 
     user_emails[chat_id].append(email.address)
 
+    domain_info = f"\n🌐 Domain: `{default_domain}`" if default_domain else ""
+
     if auto_monitor_state[chat_id]:
-        # Fix Kelemahan #1: Gunakan _start_monitoring helper (bukan inner closure)
         _start_monitoring(email.address, chat_id, context)
         await msg.edit_text(
             f"✅ *Email Baru Berhasil Dibuat!*\n\n"
-            f"📧 Alamat: `{email.address}`\n\n"
+            f"📧 Alamat: `{email.address}`{domain_info}\n\n"
             f"_Monitoring dimulai secara otomatis. Anda akan diberi tahu saat ada email masuk._",
             parse_mode="Markdown",
         )
     else:
         await msg.edit_text(
             f"✅ *Email Baru Berhasil Dibuat!*\n\n"
-            f"📧 Alamat: `{email.address}`\n\n"
+            f"📧 Alamat: `{email.address}`{domain_info}\n\n"
             f"_Auto-check sedang MATI. Gunakan /check untuk mengecek inbox secara manual._",
             parse_mode="Markdown",
         )
@@ -472,7 +539,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # --- User memilih domain tertentu ---
+    # --- User memilih domain dari /choose (sekali pakai) ---
     if data and data.startswith("choose_domain:"):
         chosen_domain = data.split(":", 1)[1]
 
@@ -483,15 +550,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         loop = asyncio.get_running_loop()
 
-        def generate_with_domain() -> str:
-            with TempMailClient() as client:
-                # Gunakan internal _post dari library untuk generate email dengan domain tertentu
-                from tempmail.constants import ENDPOINT_GENERATE_EMAIL
-                body = client._post(ENDPOINT_GENERATE_EMAIL, json={"domain": chosen_domain})
-                return body.get("data", {}).get("email", "")
-
         try:
-            email_address = await loop.run_in_executor(None, generate_with_domain)
+            def _generate() -> str:
+                with TempMailClient() as c:
+                    return c.generate_email(domain=chosen_domain).address
+
+            email_address = await loop.run_in_executor(None, _generate)
         except Exception as e:
             logger.error("Gagal generate email dengan domain %s: %s", chosen_domain, e)
             await query.edit_message_text(
@@ -499,10 +563,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"Error: `{e}`",
                 parse_mode="Markdown",
             )
-            return
-
-        if not email_address:
-            await query.edit_message_text("❌ Respons API tidak valid.")
             return
 
         user_emails[chat_id].append(email_address)
@@ -524,6 +584,64 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"_Auto-check sedang MATI. Gunakan /check untuk mengecek inbox secara manual._",
                 parse_mode="Markdown",
             )
+        return
+
+    # --- Navigasi halaman pada /setdomain ---
+    if data and data.startswith("setdomain_page:"):
+        try:
+            page = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+
+        loop = asyncio.get_running_loop()
+        domains = await _get_domains(loop)
+        if not domains:
+            await query.edit_message_text("❌ Gagal memuat daftar domain.")
+            return
+
+        current = user_default_domain.get(chat_id)
+        current_info = (
+            f"Domain default saat ini: `{current}`\n"
+            if current
+            else "Saat ini belum ada domain default (email dibuat secara acak).\n"
+        )
+        total_pages = max(1, (len(domains) + DOMAINS_PER_PAGE - 1) // DOMAINS_PER_PAGE)
+        reply_markup = _build_domain_keyboard(domains, page, mode="setdomain")
+        await query.edit_message_text(
+            f"⚙️ *Atur Domain Default untuk /generate*\n\n"
+            f"{current_info}"
+            f"Tersedia *{len(domains)} domain* di *{total_pages} halaman*.\n"
+            f"Pilih domain yang ingin dijadikan default:",
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+        return
+
+    # --- no-op untuk setdomain (indikator halaman) ---
+    if data == "setdomain_noop":
+        return
+
+    # --- User memilih domain dari /setdomain (simpan sebagai default) ---
+    if data and data.startswith("setdomain_domain:"):
+        chosen_domain = data.split(":", 1)[1]
+        user_default_domain[chat_id] = chosen_domain
+        await query.edit_message_text(
+            f"✅ *Domain Default Berhasil Diatur!*\n\n"
+            f"🌐 Domain: `{chosen_domain}`\n\n"
+            f"Mulai sekarang, perintah /generate akan selalu menggunakan domain ini.\n"
+            f"Ketuk /setdomain kapan saja untuk menggantinya.",
+            parse_mode="Markdown",
+        )
+        return
+
+    # --- User memilih reset domain ke acak ---
+    if data == "setdomain_reset":
+        user_default_domain.pop(chat_id, None)
+        await query.edit_message_text(
+            "🎲 *Domain Default Dihapus.*\n\n"
+            "Perintah /generate sekarang akan membuat email dengan domain acak dari server.",
+            parse_mode="Markdown",
+        )
         return
 
     # --- Handler autocheck ---
@@ -613,6 +731,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", start_command))
     app.add_handler(CommandHandler("generate", generate_command))
     app.add_handler(CommandHandler("choose", choose_command))
+    app.add_handler(CommandHandler("setdomain", setdomain_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("autocheck", autocheck_command))
     app.add_handler(CommandHandler("list", list_command))

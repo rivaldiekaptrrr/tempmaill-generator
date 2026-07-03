@@ -238,11 +238,19 @@ class TempMailClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_email(self) -> EmailAddress:
-        """Generate a new random temporary email address.
+    def generate_email(self, domain: Optional[str] = None) -> EmailAddress:
+        """Generate a new temporary email address.
 
-        Makes a POST request to ``/api/generate-email`` and returns a
-        parsed :class:`~tempmail.models.EmailAddress`.
+        Makes a POST request to ``/api/generate-email``.
+        If ``domain`` is provided, the generated email will use that specific
+        domain (with a random prefix). If omitted, both the prefix and domain
+        are chosen randomly by the server.
+
+        Args:
+            domain: Optional domain to use for the generated email address
+                    (e.g. ``"example.com"``). Must be one of the available
+                    domains returned by :meth:`get_domains`. If ``None``,
+                    the server picks a random domain.
 
         Returns:
             A newly generated :class:`~tempmail.models.EmailAddress`.
@@ -254,8 +262,13 @@ class TempMailClient:
 
         Example::
 
+            # Fully random
             email = client.generate_email()
             print(email.address)   # e.g. "user123@example.com"
+
+            # Random prefix, specific domain
+            email = client.generate_email(domain="mydomain.com")
+            print(email.address)   # e.g. "abc99@mydomain.com"
         """
         @with_retry(
             max_attempts=self._config.retry_max_attempts,
@@ -263,7 +276,8 @@ class TempMailClient:
             exponential_base=self._config.retry_exponential_base,
         )
         def _call() -> EmailAddress:
-            body = self._post(ENDPOINT_GENERATE_EMAIL)
+            payload: dict = {} if domain is None else {"domain": domain}
+            body = self._post(ENDPOINT_GENERATE_EMAIL, json=payload)
             # Actual response: {"success": true, "data": {"email": "..."}}
             data = body.get("data", body)
             raw_address = data.get("email") or data.get("address")
@@ -276,6 +290,7 @@ class TempMailClient:
             return email_address
 
         return _call()
+
 
     def get_domains(self, limit: Optional[int] = None) -> list[str]:
         """Retrieve a list of available email domains.
