@@ -57,7 +57,7 @@ Langkah terakhir, pastikan semuanya terhubung sebelum Anda menyerahkannya pada H
 curl -X POST https://bot.valtech.my.id/generate \
      -H "Authorization: Bearer hermes-secret-key-2026" \
      -H "Content-Type: application/json" \
-     -d '{"action": "generate", "telegram_chat_id": "-1002345678901"}'
+     -d '{"action": "generate", "telegram_chat_id": "-1004341867952"}'
 ```
 
 Jika Terminal merespons dengan JSON berisi atribut `email`, dan bot Anda tidak lama kemudian mulai mengirimi pesan OTP ke grup... **Selamat! Autonomous Workflow Anda sudah 100% Berhasil!** 🚀

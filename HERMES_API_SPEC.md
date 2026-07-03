@@ -31,7 +31,7 @@ Agen HERMES harus mengirimkan data JSON yang berisi *chat_id* dari grup Telegram
 ```json
 {
   "action": "generate",
-  "telegram_chat_id": "-100123456789"
+  "telegram_chat_id": "-1004341867952"
 }
 ```
 
