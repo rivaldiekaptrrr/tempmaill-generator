@@ -26,14 +26,7 @@ import os
 import socket
 from collections import defaultdict
 
-# --- PATCH: Paksa Python hanya menggunakan IPv4 ---
-# Ini mencegah httpx/telegram-bot nge-hang (timeout) jika IPv6 di VPS rusak/blackholed.
-old_getaddrinfo = socket.getaddrinfo
-def _ipv4_getaddrinfo(*args, **kwargs):
-    responses = old_getaddrinfo(*args, **kwargs)
-    return [r for r in responses if r[0] == socket.AF_INET]
-socket.getaddrinfo = _ipv4_getaddrinfo
-# ---------------------------------------------------
+
 from collections.abc import Callable, Coroutine
 from typing import Any
 
