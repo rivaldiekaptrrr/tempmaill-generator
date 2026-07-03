@@ -21,9 +21,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import socket
 from collections import defaultdict
 
 
@@ -31,7 +31,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ExtBot
 
 from tempmail import TempMailClient, extract_otp, extract_verification_urls, setup_logging
 from tempmail.models import EmailMessage
@@ -90,13 +90,13 @@ def format_email_message(message: EmailMessage) -> str:
 
 
 def make_email_callback(
-    chat_id: int, context: ContextTypes.DEFAULT_TYPE
+    chat_id: int, bot: ExtBot
 ) -> Callable[[EmailMessage], Coroutine[Any, Any, None]]:
     """
-    Fix Kelemahan #1: Factory yang membuat callback `on_new_email` terikat ke chat_id tertentu.
-
-    Dengan memisahkan callback dari `generate_command`, fungsi ini dapat
-    di-reuse saat restart monitoring dari `autocheck:on`.
+    Factory yang membuat callback `on_new_email` terikat ke chat_id tertentu.
+    
+    Menerima instance `bot` secara langsung sehingga bisa dipanggil 
+    baik dari command handler Telegram maupun dari background API.
     """
 
     async def on_new_email(message: EmailMessage) -> None:
@@ -120,7 +120,7 @@ def make_email_callback(
 
         text = format_email_message(message)
         try:
-            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
         except Exception as e:
             logger.error("Gagal mengirim notifikasi Telegram: %s", e)
 
@@ -128,7 +128,7 @@ def make_email_callback(
 
 
 def _start_monitoring(
-    email: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE
+    email: str, chat_id: int, bot: ExtBot
 ) -> asyncio.Task[Any]:
     """
     Fix Bug #4: Buat dan daftarkan task monitoring baru.
@@ -136,7 +136,7 @@ def _start_monitoring(
     Task yang selesai (selesai normal, error, atau dibatalkan) akan otomatis
     dihapus dari `monitoring_tasks` via `add_done_callback`.
     """
-    callback = make_email_callback(chat_id, context)
+    callback = make_email_callback(chat_id, bot)
     task = asyncio.create_task(monitor_async(email, callback=callback))
 
     def _on_done(t: asyncio.Task[Any]) -> None:
@@ -346,7 +346,7 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     domain_info = f"\n🌐 Domain: `{default_domain}`" if default_domain else ""
 
     if auto_monitor_state[chat_id]:
-        _start_monitoring(email.address, chat_id, context)
+        _start_monitoring(email.address, chat_id, context.bot)
         await msg.edit_text(
             f"✅ *Email Baru Berhasil Dibuat!*\n\n"
             f"📧 Alamat: `{email.address}`{domain_info}\n\n"
@@ -561,7 +561,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_emails[chat_id].append(email_address)
 
         if auto_monitor_state[chat_id]:
-            _start_monitoring(email_address, chat_id, context)
+            _start_monitoring(email_address, chat_id, context.bot)
             await query.edit_message_text(
                 f"✅ *Email Baru Berhasil Dibuat!*\n\n"
                 f"📧 Alamat: `{email_address}`\n"
@@ -665,7 +665,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             restarted = 0
             for email in user_emails.get(chat_id, []):
                 if email not in monitoring_tasks or monitoring_tasks[email].done():
-                    _start_monitoring(email, chat_id, context)
+                    _start_monitoring(email, chat_id, context.bot)
                     restarted += 1
 
             await query.edit_message_text(
@@ -697,6 +697,72 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ---------------------------------------------------------------------------
+# API Server (Autonomous Workflow)
+# ---------------------------------------------------------------------------
+
+from aiohttp import web
+
+async def api_generate_handler(request: web.Request) -> web.Response:
+    auth_header = request.headers.get("Authorization", "")
+    expected_token = os.environ.get("API_BEARER_TOKEN", "")
+    
+    if not expected_token:
+        return web.json_response({"success": False, "error": "API token not configured on server"}, status=500)
+        
+    if not auth_header.startswith("Bearer ") or auth_header.split(" ")[1] != expected_token:
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401)
+        
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+        
+    chat_id = data.get("telegram_chat_id")
+    if not chat_id:
+        return web.json_response({"success": False, "error": "Missing telegram_chat_id"}, status=400)
+        
+    try:
+        chat_id = int(chat_id)
+    except ValueError:
+        return web.json_response({"success": False, "error": "Invalid telegram_chat_id"}, status=400)
+        
+    app_bot: Application = request.app['bot_app']
+    loop = asyncio.get_running_loop()
+    
+    try:
+        def _generate() -> str:
+            with TempMailClient() as c:
+                return c.generate_email().address
+        email_address = await loop.run_in_executor(None, _generate)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+        
+    # Start monitoring automatically
+    user_emails[chat_id].append(email_address)
+    _start_monitoring(email_address, chat_id, app_bot.bot)
+    
+    domain = email_address.split("@")[1] if "@" in email_address else ""
+    return web.json_response({
+        "success": True,
+        "email": email_address,
+        "domain": domain
+    })
+
+async def start_web_server(app: Application) -> None:
+    server_app = web.Application()
+    server_app['bot_app'] = app
+    server_app.router.add_post('/generate', api_generate_handler)
+    
+    runner = web.AppRunner(server_app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info("REST API Server berjalan di port %d", port)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -717,6 +783,7 @@ def main() -> None:
         .read_timeout(30.0)
         .write_timeout(30.0)
         .pool_timeout(30.0)
+        .post_init(start_web_server)
         .build()
     )
 
