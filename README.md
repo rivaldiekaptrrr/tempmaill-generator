@@ -346,8 +346,9 @@ The project includes a fully interactive Telegram bot that allows you to manage 
 
 | Command | Description |
 |---------|-------------|
-| `/generate` | Create a new email address with a **random domain** and automatically monitor it via SSE. |
+| `/generate` | Create a new email address with a **random domain** (or your default domain) and automatically monitor it via SSE. |
 | `/choose` | 🆕 **Pick your own domain** from a paginated list of 950+ available domains, then generate an email with the chosen domain. |
+| `/setdomain` | 🆕 **Set a default domain** to be used automatically whenever you use `/generate`. You can also reset back to random domains. |
 | `/check` | Manually force a check for new emails on all active addresses (fallback polling). |
 | `/list` | View all active emails currently being monitored with their status. |
 | `/stop` | Stop monitoring an email via an interactive inline keyboard. |
@@ -369,6 +370,27 @@ The `/choose` command lets you pick a domain from the full list of **958 availab
 > **Note:** The domain list is cached in memory after the first `/choose` call. To force a refresh, restart the bot.
 
 You can change the number of domains shown per page by editing `DOMAINS_PER_PAGE` in the bot script (default: `8`).
+
+### 🤖 Autonomous Workflow API (Webhook)
+
+The bot also acts as a **REST API Server** (running concurrently with the Telegram polling) to support automated agent workflows (like HERMES).
+By default, the server runs on port `8080`. You must configure `API_BEARER_TOKEN` in your environment variables to secure it.
+
+**Endpoint:** `POST /generate`
+
+**Headers:**
+```http
+Authorization: Bearer <YOUR_API_BEARER_TOKEN>
+```
+**Payload:**
+```json
+{
+  "action": "generate",
+  "telegram_chat_id": "-1004341867952"
+}
+```
+
+The API will instantly generate an email, return it to the caller, and **automatically forward any OTPs** received on that email directly to the specified Telegram group. See [HERMES_API_SPEC.md](HERMES_API_SPEC.md) for complete details.
 
 ### Running Locally
 ```bash
