@@ -61,3 +61,12 @@ curl -X POST https://bot.valtech.my.id/generate \
 ```
 
 Jika Terminal merespons dengan JSON berisi atribut `email`, dan bot Anda tidak lama kemudian mulai mengirimi pesan OTP ke grup... **Selamat! Autonomous Workflow Anda sudah 100% Berhasil!** 🚀
+
+---
+
+## ✅ Tahap 6: Integrasikan dengan HERMES
+Jika Tahap 5 sudah berhasil, langkah terakhir adalah menyerahkan instruksi ke agen otonom Anda (HERMES).
+1. Buka file `HERMES_API_SPEC.md` yang ada di *root* folder *project* ini.
+2. Salin (*copy*) seluruh teks yang ada di dalam file tersebut.
+3. Berikan teks tersebut sebagai *Prompt* / Instruksi Dasar (*System Prompt*) kepada HERMES Agent Anda.
+4. *Selesai!* HERMES sekarang tahu persis URL, *header*, dan format data yang dibutuhkan untuk berinteraksi dengan bot TempMail Anda!
