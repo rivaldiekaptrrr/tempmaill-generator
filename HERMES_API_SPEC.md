@@ -27,16 +27,20 @@ Authorization: Bearer <TOKEN_RAHASIA_ANDA>
 
 Agen HERMES harus mengirimkan data JSON yang berisi *chat_id* dari grup Telegram tempat OTP akan diteruskan.
 
-**Contoh Payload:**
+**Contoh Payload Lengkap:**
 ```json
 {
   "action": "generate",
-  "telegram_chat_id": "-1004341867952"
+  "telegram_chat_id": "-1004341867952",
+  "domain": "a.xunika.uk",
+  "prefix": "valtech"
 }
 ```
 
-*Catatan:*
+*Catatan Parameter:*
 - `telegram_chat_id` (Wajib): ID grup Telegram (biasanya diawali tanda minus `-`). Pastikan bot TempMail sudah ditambahkan ke dalam grup tersebut dan memiliki akses untuk mengirim pesan.
+- `domain` (Opsional): Domain spesifik yang ingin digunakan (contoh: `"a.xunika.uk"`). Jika tidak diisi, bot akan mengacak domain.
+- `prefix` (Opsional): Awalan/username spesifik untuk email (contoh: `"valtech"`). Jika tidak diisi, awalan akan diacak oleh server.
 
 ---
 
