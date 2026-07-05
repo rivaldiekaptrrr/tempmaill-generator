@@ -150,6 +150,17 @@ def _start_monitoring(
     return task
 
 
+def _stop_all_monitoring_for_user(chat_id: int) -> int:
+    """Menghentikan semua task monitoring yang sedang aktif untuk user tertentu."""
+    canceled = 0
+    for email in user_emails.get(chat_id, []):
+        task = monitoring_tasks.pop(email, None)
+        if task and not task.done():
+            task.cancel()
+            canceled += 1
+    return canceled
+
+
 async def _get_domains(loop: asyncio.AbstractEventLoop) -> list[str]:
     """Ambil daftar domain dari API, gunakan cache jika sudah tersedia."""
     global _domain_cache
@@ -346,6 +357,7 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     domain_info = f"\n🌐 Domain: `{default_domain}`" if default_domain else ""
 
     if auto_monitor_state[chat_id]:
+        _stop_all_monitoring_for_user(chat_id)
         _start_monitoring(email.address, chat_id, context.bot)
         await msg.edit_text(
             f"✅ *Email Baru Berhasil Dibuat!*\n\n"
@@ -561,6 +573,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_emails[chat_id].append(email_address)
 
         if auto_monitor_state[chat_id]:
+            _stop_all_monitoring_for_user(chat_id)
             _start_monitoring(email_address, chat_id, context.bot)
             await query.edit_message_text(
                 f"✅ *Email Baru Berhasil Dibuat!*\n\n"
@@ -737,6 +750,9 @@ async def api_generate_handler(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
         
+    # Batasi pemantauan agar mencegah rate-limit Cloudflare
+    _stop_all_monitoring_for_user(chat_id)
+    
     # Start monitoring automatically
     user_emails[chat_id].append(email_address)
     _start_monitoring(email_address, chat_id, app_bot.bot)
