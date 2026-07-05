@@ -238,19 +238,21 @@ class TempMailClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_email(self, domain: Optional[str] = None) -> EmailAddress:
+    def generate_email(self, domain: Optional[str] = None, prefix: Optional[str] = None) -> EmailAddress:
         """Generate a new temporary email address.
 
         Makes a POST request to ``/api/generate-email``.
         If ``domain`` is provided, the generated email will use that specific
-        domain (with a random prefix). If omitted, both the prefix and domain
-        are chosen randomly by the server.
+        domain. If ``prefix`` is provided, the generated email will use that specific
+        prefix. If omitted, both the prefix and domain are chosen randomly by the server.
 
         Args:
             domain: Optional domain to use for the generated email address
                     (e.g. ``"example.com"``). Must be one of the available
                     domains returned by :meth:`get_domains`. If ``None``,
                     the server picks a random domain.
+            prefix: Optional prefix for the email address (e.g. ``"valtech"``).
+                    If ``None``, a random prefix is chosen by the server.
 
         Returns:
             A newly generated :class:`~tempmail.models.EmailAddress`.
@@ -276,7 +278,12 @@ class TempMailClient:
             exponential_base=self._config.retry_exponential_base,
         )
         def _call() -> EmailAddress:
-            payload: dict = {} if domain is None else {"domain": domain}
+            payload: dict = {}
+            if domain is not None:
+                payload["domain"] = domain
+            if prefix is not None:
+                payload["prefix"] = prefix
+            
             body = self._post(ENDPOINT_GENERATE_EMAIL, json=payload)
             # Actual response: {"success": true, "data": {"email": "..."}}
             data = body.get("data", body)

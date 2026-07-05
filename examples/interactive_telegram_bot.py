@@ -742,10 +742,14 @@ async def api_generate_handler(request: web.Request) -> web.Response:
     app_bot: Application = request.app['bot_app']
     loop = asyncio.get_running_loop()
     
+    req_domain = body.get("domain")
+    req_prefix = body.get("prefix")
+
     try:
         def _generate() -> str:
             with TempMailClient() as c:
-                return c.generate_email().address
+                return c.generate_email(domain=req_domain, prefix=req_prefix).address
+        
         email_address = await loop.run_in_executor(None, _generate)
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
