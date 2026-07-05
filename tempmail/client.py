@@ -491,6 +491,7 @@ class TempMailClient:
         email: str,
         callback: Optional[Any] = None,
         timeout: Optional[int] = None,
+        cancel_event: Optional[Any] = None,
     ) -> Any:
         """Monitor an inbox for new messages using Server-Sent Events.
 
@@ -533,6 +534,7 @@ class TempMailClient:
             email=email,
             config=self._config,
             timeout=timeout,
+            cancel_event=cancel_event,
         )
 
         if callback is not None:

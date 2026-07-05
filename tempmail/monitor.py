@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Callable, Optional
 
@@ -160,6 +161,7 @@ def _stream_sse(
     email: str,
     config: TempMailConfig,
     timeout: Optional[int] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Iterator[EmailMessage]:
     """Stream SSE events from the API and yield :class:`~tempmail.models.EmailMessage`.
 
@@ -192,6 +194,10 @@ def _stream_sse(
     max_attempts = 999999
 
     while True:
+        if cancel_event and cancel_event.is_set():
+            logger.info("SSE: stream %s cancelled before connecting", email)
+            return
+
         try:
             with session.get(
                 url,
@@ -209,6 +215,10 @@ def _stream_sse(
 
                 buffer = ""
                 for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                    if cancel_event and cancel_event.is_set():
+                        logger.info("SSE: stream %s cancelled during read", email)
+                        return
+
                     if chunk is None:
                         continue
                     buffer += chunk
@@ -307,12 +317,13 @@ async def monitor_async(
     effective_config = config or default_config
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Optional[EmailMessage]] = asyncio.Queue()
+    cancel_event = threading.Event()
 
     def _producer() -> None:
         """Run the blocking SSE stream and enqueue messages."""
         with TempMailClient(effective_config) as client:
             try:
-                for message in client.monitor(email, timeout=timeout):
+                for message in client.monitor(email, timeout=timeout, cancel_event=cancel_event):
                     asyncio.run_coroutine_threadsafe(
                         queue.put(message), loop
                     ).result()
@@ -322,13 +333,18 @@ async def monitor_async(
     # Run producer in a thread
     producer_future = loop.run_in_executor(None, _producer)
 
-    while True:
-        message = await queue.get()
-        if message is None:
-            break
-        if asyncio.iscoroutinefunction(callback):
-            await callback(message)
-        else:
-            callback(message)
+    try:
+        while True:
+            message = await queue.get()
+            if message is None:
+                break
+            if asyncio.iscoroutinefunction(callback):
+                await callback(message)
+            else:
+                callback(message)
 
-    await producer_future
+        await producer_future
+    except asyncio.CancelledError:
+        logger.info("SSE: Async task cancelled for %s. Setting event to gracefully stop thread...", email)
+        cancel_event.set()
+        raise
