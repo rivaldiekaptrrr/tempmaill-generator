@@ -742,8 +742,8 @@ async def api_generate_handler(request: web.Request) -> web.Response:
     app_bot: Application = request.app['bot_app']
     loop = asyncio.get_running_loop()
     
-    req_domain = body.get("domain")
-    req_prefix = body.get("prefix")
+    req_domain = data.get("domain")
+    req_prefix = data.get("prefix")
 
     try:
         def _generate() -> str:
