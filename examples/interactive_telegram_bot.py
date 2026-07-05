@@ -53,7 +53,7 @@ monitoring_tasks: dict[str, asyncio.Task[Any]] = {}
 
 # Fix Kelemahan #2: seen_messages diisolasi per-user (chat_id) agar tidak bocor antar pengguna
 seen_messages: dict[int, set[str]] = defaultdict(set)
-auto_monitor_state: dict[int, bool] = defaultdict(lambda: True)
+auto_monitor_state: dict[int, bool] = defaultdict(lambda: False)
 
 # Default domain per-user: jika diset, /generate akan selalu menggunakan domain ini
 user_default_domain: dict[int, str] = {}
@@ -757,9 +757,10 @@ async def api_generate_handler(request: web.Request) -> web.Response:
     # Batasi pemantauan agar mencegah rate-limit Cloudflare
     _stop_all_monitoring_for_user(chat_id)
     
-    # Start monitoring automatically
+    # Start monitoring automatically ONLY IF autocheck is ON
     user_emails[chat_id].append(email_address)
-    _start_monitoring(email_address, chat_id, app_bot.bot)
+    if auto_monitor_state[chat_id]:
+        _start_monitoring(email_address, chat_id, app_bot.bot)
     
     domain = email_address.split("@")[1] if "@" in email_address else ""
     return web.json_response({

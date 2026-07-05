@@ -38,7 +38,8 @@ Klien harus mengirimkan data JSON yang berisi *chat_id* dari grup Telegram tempa
 ```
 
 *Catatan Parameter:*
-- `telegram_chat_id` (Wajib): ID grup Telegram (biasanya diawali tanda minus `-`). Pastikan bot TempMail sudah ditambahkan ke dalam grup tersebut dan memiliki akses untuk mengirim pesan.
+- `telegram_chat_id` (Wajib): ID grup Telegram (biasanya diawali tanda minus `-`). Pastikan bot TempMail sudah ditambahkan ke dalam grup tersebut dan memiliki akses untuk mengirim pesan. 
+  *(Catatan: Pengiriman OTP ke grup secara real-time hanya akan terjadi jika administrator grup telah mengaktifkan perintah `/autocheck` pada grup tersebut. Jika mati, Anda tetap bisa mengambil pesan via endpoint `GET /otp`).*
 - `domain` (Opsional): Domain spesifik yang ingin digunakan (contoh: `"a.xunika.uk"`). Jika tidak diisi, bot akan mengacak domain.
 - `prefix` (Opsional): Awalan/username spesifik untuk email (contoh: `"valtech"`). Jika tidak diisi, awalan akan diacak oleh server.
 
