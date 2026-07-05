@@ -768,10 +768,60 @@ async def api_generate_handler(request: web.Request) -> web.Response:
         "domain": domain
     })
 
+async def api_get_otp_handler(request: web.Request) -> web.Response:
+    auth_header = request.headers.get("Authorization", "")
+    expected_token = os.environ.get("API_BEARER_TOKEN", "")
+    
+    if not expected_token:
+        return web.json_response({"success": False, "error": "API token not configured on server"}, status=500)
+        
+    if not auth_header.startswith("Bearer ") or auth_header.split(" ")[1] != expected_token:
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401)
+        
+    email = request.query.get("email")
+    if not email:
+        return web.json_response({"success": False, "error": "Missing email query parameter"}, status=400)
+        
+    loop = asyncio.get_running_loop()
+    
+    try:
+        def _get_messages():
+            with TempMailClient() as c:
+                return c.get_messages(email)
+                
+        messages = await loop.run_in_executor(None, _get_messages)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+        
+    messages_data = []
+    latest_otp = None
+    
+    for msg in messages:
+        otp = extract_otp(msg.text, msg.html)
+        if otp and not latest_otp:
+            latest_otp = otp  # Ambil OTP pertama (terbaru) yang ditemukan
+            
+        messages_data.append({
+            "id": msg.id,
+            "sender": msg.sender,
+            "subject": msg.subject,
+            "date": msg.date.isoformat() if msg.date else None,
+            "text": msg.text,
+            "extracted_otp": otp
+        })
+        
+    return web.json_response({
+        "success": True,
+        "email": email,
+        "otp": latest_otp,
+        "messages": messages_data
+    })
+
 async def start_web_server(app: Application) -> None:
     server_app = web.Application()
     server_app['bot_app'] = app
     server_app.router.add_post('/generate', api_generate_handler)
+    server_app.router.add_get('/otp', api_get_otp_handler)
     
     runner = web.AppRunner(server_app)
     await runner.setup()
